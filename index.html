@@ -10,7 +10,14 @@
     <script>
         tailwind.config = {
             darkMode: 'class',
-            theme: { extend: { colors: { void: '#030712', cyber: { cyan: '#00f3ff', amber: '#f59e0b', rose: '#f43f5e', emerald: '#10b981', dark: '#0b0f19' } } } }
+            theme: { 
+                extend: { 
+                    colors: { 
+                        void: '#030712', 
+                        cyber: { cyan: '#00f3ff', amber: '#f59e0b', rose: '#f43f5e', emerald: '#10b981', dark: '#0b0f19' } 
+                    } 
+                } 
+            }
         }
     </script>
     
@@ -26,7 +33,7 @@
         body { 
             font-family: 'Inter', sans-serif; 
             background-color: #030712; 
-            background-image: radial-gradient(circle at center, rgba(3, 7, 18, 0.3) 0%, rgba(3, 7, 18, 0.95) 100%), url('https://lh3.googleusercontent.com/d/1LlSjcVV7A2w5tjqL50pJgC6zA8BwoI64');
+            background-image: radial-gradient(circle at center, rgba(3, 7, 18, 0.4) 0%, rgba(3, 7, 18, 0.95) 100%), url('https://lh3.googleusercontent.com/d/1LlSjcVV7A2w5tjqL50pJgC6zA8BwoI64');
             background-size: cover;
             background-position: center;
             background-attachment: fixed;
@@ -36,43 +43,45 @@
         .font-mono { font-family: 'Share Tech Mono', monospace; }
         .glow-cyan { box-shadow: 0 0 15px rgba(0, 243, 255, 0.3); }
         .glow-amber { box-shadow: 0 0 15px rgba(245, 158, 11, 0.3); }
+        
+        /* Glassmorphism overlays to let the custom background shine through */
         .cyber-panel { 
-            background: linear-gradient(135deg, rgba(11, 15, 25, 0.75) 0%, rgba(3, 7, 18, 0.88) 100%); 
+            background: linear-gradient(135deg, rgba(11, 15, 25, 0.6) 0%, rgba(3, 7, 18, 0.7) 100%); 
             border: 1px solid rgba(0, 243, 255, 0.3); 
             backdrop-filter: blur(12px); 
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.6);
+            -webkit-backdrop-filter: blur(12px);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
         }
         
-        /* Fixed scanlines overlay - pointer-events: none ensures inputs remain fully clickable */
+        /* Pointer events NONE for scanlines so inputs are clickable */
         .scanlines-overlay {
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 9999; pointer-events: none;
             background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0, 0, 0, 0.2) 50%, rgba(0, 0, 0, 0.2));
-            background-size: 100% 4px; opacity: 0.6;
+            background-size: 100% 4px; opacity: 0.5;
         }
         
         .custom-map-pin { background: transparent; border: none; }
         
-        /* Modal strict layering */
         .modal-overlay { z-index: 10000; }
         .modal-content { position: relative; z-index: 10001; pointer-events: auto; }
     </style>
 </head>
 <body class="min-h-[100dvh] bg-void text-gray-100 flex flex-col overflow-x-hidden">
+    <!-- Fixed Scanlines Overlay -->
     <div class="scanlines-overlay"></div>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, addDoc, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, addDoc, query, orderBy, limit, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Firebase Setup - Replace DEMO_MODE_REPLACE_ME with your actual Vercel/Firebase API Key if using cloud
         const firebaseConfig = {
-            apiKey: "DEMO_MODE_REPLACE_ME", 
+            apiKey: "AIzaSyB1fzt9fF-fpTO6u48I4hRGRm9Oq3_I38I", 
             authDomain: "star-command.firebaseapp.com",
-            projectId: "star-command",
-            storageBucket: "star-command.firebasestorage.app",
-            messagingSenderId: "123456789",
-            appId: "1:123456789:web:abcdef"
+            projectId: "star-command-center",
+            storageBucket: "star-command-center.firebasestorage.app",
+            messagingSenderId: "1059805666963",
+            appId: "1:1059805666963:web:a8850a9cb8217617997766"
         };
         
         let app, db, auth, cloudUser;
@@ -92,14 +101,13 @@
         window.isRecordingAudio = false;
         window.editingAgentId = null;
 
-        // DUAL ENGINE STORAGE: Loads from LocalStorage first to guarantee zero-data loss & persistence
         window.DEMO_USERS = JSON.parse(localStorage.getItem('star_db_users')) || {
             'STAR-ADMIN': { id: 'STAR-ADMIN', name: 'Commander Admin', clearance: 'ADMIN', pass: 'ILOV3BJMP7', passHash: 'ILOV3BJMP7', status: 'APPROVED', photo: '', rank: 'Director', position: 'Command HQ', additionalInfo: {} }
         };
         window.pendingRegistrations = JSON.parse(localStorage.getItem('star_db_pending')) || {};
         window.agentSessionLogs = JSON.parse(localStorage.getItem('star_db_logs')) || [];
         window.appBranding = JSON.parse(localStorage.getItem('star_db_branding')) || { logoUrl: '', appName: 'S.T.A.R.' };
-        window.commsMessages = [];
+        window.commsMessages = JSON.parse(localStorage.getItem('star_db_comms')) || [];
 
         window.sanitizeHTML = function(str) {
             if (typeof str !== 'string') return '';
@@ -111,6 +119,7 @@
             localStorage.setItem('star_db_pending', JSON.stringify(window.pendingRegistrations));
             localStorage.setItem('star_db_logs', JSON.stringify(window.agentSessionLogs));
             localStorage.setItem('star_db_branding', JSON.stringify(window.appBranding));
+            localStorage.setItem('star_db_comms', JSON.stringify(window.commsMessages));
         }
 
         async function initCloudSync() {
@@ -123,46 +132,63 @@
                     cloudUser = auth.currentUser;
                     isCloudEnabled = true;
                     setupCloudListeners();
-                } else {
-                    console.log("Running in Local Offline Mode. Data is safely persisting to browser local storage.");
                 }
             } catch (err) {
-                console.warn("Cloud sync init failed, falling back to local mode:", err);
+                console.warn("Cloud sync init failed, utilizing local mode:", err);
             } finally {
                 checkLocalAuthSession();
                 applyBranding();
+                renderCommsStream();
             }
         }
 
         function setupCloudListeners() {
             if (!isCloudEnabled) return;
             onSnapshot(getCol('agents'), (snapshot) => {
-                window.DEMO_USERS = {}; window.pendingRegistrations = {};
                 snapshot.forEach(doc => {
                     const data = doc.data();
                     if (data.status === 'APPROVED') window.DEMO_USERS[doc.id] = data;
                     else if (data.status === 'PENDING') window.pendingRegistrations[doc.id] = data;
                 });
                 window.persistLocalData();
-                renderActiveAgentRoster(); renderAdminPendingApprovals();
-            });
+                renderActiveAgentRoster(); 
+                renderAdminPendingApprovals();
+            }, (error) => console.warn("Agent Sync Error:", error));
 
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'branding'), (docSnap) => {
-                if (docSnap.exists()) { window.appBranding = docSnap.data(); window.persistLocalData(); applyBranding(); }
+                if (docSnap.exists()) { 
+                    window.appBranding = docSnap.data(); 
+                    window.persistLocalData(); 
+                    applyBranding(); 
+                }
             });
 
-            onSnapshot(getCol('locations'), (snapshot) => { snapshot.forEach(doc => { window.updateRemoteAgentMarker(doc.data()); }); });
+            onSnapshot(getCol('locations'), (snapshot) => { 
+                snapshot.forEach(doc => { window.updateRemoteAgentMarker(doc.data()); }); 
+            });
 
-            const qComms = query(getCol('comms'), orderBy('createdAt', 'asc'), limit(50));
+            const qComms = query(getCol('comms'), orderBy('createdAt', 'asc'), limit(100));
             onSnapshot(qComms, (snapshot) => {
-                let msgs = []; snapshot.forEach(doc => msgs.push({ id: doc.id, ...doc.data() }));
-                window.commsMessages = msgs; renderCommsStream();
+                let msgs = []; 
+                snapshot.forEach(doc => msgs.push({ id: doc.id, ...doc.data() }));
+                
+                // Merge cloud messages with local ones cleanly
+                const mergedMessagesMap = new Map();
+                window.commsMessages.forEach(m => mergedMessagesMap.set(m.createdAt, m));
+                msgs.forEach(m => mergedMessagesMap.set(m.createdAt, m));
+                
+                window.commsMessages = Array.from(mergedMessagesMap.values()).sort((a,b) => a.createdAt - b.createdAt);
+                window.persistLocalData();
+                renderCommsStream();
             });
 
             const qLogs = query(getCol('logs'), orderBy('createdAt', 'desc'), limit(50));
             onSnapshot(qLogs, (snapshot) => {
-                let logs = []; snapshot.forEach(doc => logs.push(doc.data()));
-                window.agentSessionLogs = logs; window.persistLocalData(); renderSessionLogsTable();
+                let logs = []; 
+                snapshot.forEach(doc => logs.push(doc.data()));
+                window.agentSessionLogs = logs; 
+                window.persistLocalData(); 
+                renderSessionLogsTable();
             });
         }
 
@@ -193,7 +219,9 @@
             window.appBranding = newBranding;
             window.persistLocalData();
             if (isCloudEnabled) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'branding'), newBranding);
-            applyBranding(); window.closeLogoConfigModal(); window.showToast("Branding updated globally.");
+            applyBranding(); 
+            window.closeLogoConfigModal(); 
+            window.showToast("Branding updated globally.");
         }
 
         window.toggleAuthMode = function() {
@@ -232,11 +260,30 @@
             const errorMsg = document.getElementById('auth-error-msg');
 
             if (window.pendingRegistrations[idInput]) {
-                errorMsg.innerText = "ACCOUNT PENDING ADMIN APPROVAL."; errorMsg.classList.remove('hidden'); return;
+                errorMsg.innerText = "ACCOUNT PENDING ADMIN APPROVAL."; 
+                errorMsg.classList.remove('hidden'); 
+                return;
             }
 
             const isMasterOverride = (idInput === 'STAR-ADMIN' && passInput === 'ILOV3BJMP7');
             let foundUser = window.DEMO_USERS[idInput];
+
+            // CRITICAL FIX: Asynchronous direct cloud lookup for new devices!
+            if (!foundUser && isCloudEnabled && !isMasterOverride) {
+                try {
+                    const snap = await getDoc(getDocRef('agents', idInput));
+                    if (snap.exists()) {
+                        const cloudUserData = snap.data();
+                        if (cloudUserData.status === 'APPROVED') {
+                            foundUser = cloudUserData;
+                            window.DEMO_USERS[idInput] = foundUser;
+                            window.persistLocalData();
+                        }
+                    }
+                } catch(err) {
+                    console.warn("Cloud lookup failed during login:", err);
+                }
+            }
 
             if (isMasterOverride && !foundUser) {
                 foundUser = { id: 'STAR-ADMIN', name: 'Commander Admin', clearance: 'ADMIN', pass: 'ILOV3BJMP7', passHash: 'ILOV3BJMP7', status: 'APPROVED' };
@@ -261,7 +308,9 @@
                 if (isCloudEnabled) logDocRef = await addDoc(getCol('logs'), logEntry);
 
                 document.getElementById('modal-auth-login').classList.add('hidden');
-                enforceRoleBasedUI(); window.startLiveGpsTracking(); window.showToast(`Welcome, ${window.currentActiveUser.name}`);
+                enforceRoleBasedUI(); 
+                window.startLiveGpsTracking(); 
+                window.showToast(`Welcome, ${window.currentActiveUser.name}`);
 
                 if ("geolocation" in navigator) {
                     navigator.geolocation.getCurrentPosition(
@@ -276,7 +325,8 @@
                     );
                 }
             } else {
-                errorMsg.innerText = `INVALID CREDENTIALS`; errorMsg.classList.remove('hidden');
+                errorMsg.innerText = `INVALID CREDENTIALS`; 
+                errorMsg.classList.remove('hidden');
             }
         }
 
@@ -288,7 +338,9 @@
                     if (parsed && parsed.expiresAt && parsed.expiresAt > Date.now()) {
                         window.currentActiveUser = parsed;
                         document.getElementById('modal-auth-login').classList.add('hidden');
-                        enforceRoleBasedUI(); window.startLiveGpsTracking(); return;
+                        enforceRoleBasedUI(); 
+                        window.startLiveGpsTracking(); 
+                        return;
                     }
                 }
             } catch (e) { localStorage.removeItem('star_auth_user'); }
@@ -296,8 +348,10 @@
         }
 
         window.logoutUserSession = function() {
-            localStorage.removeItem('star_auth_user'); window.currentActiveUser = null;
-            enforceRoleBasedUI(); document.getElementById('modal-auth-login').classList.remove('hidden');
+            localStorage.removeItem('star_auth_user'); 
+            window.currentActiveUser = null;
+            enforceRoleBasedUI(); 
+            document.getElementById('modal-auth-login').classList.remove('hidden');
             window.showToast("Session Terminated.");
         }
 
@@ -313,7 +367,10 @@
             document.getElementById('btn-header-signin').classList.add('hidden');
             document.getElementById('btn-header-signout').classList.remove('hidden');
 
-            renderActiveAgentRoster(); renderAdminPendingApprovals(); renderSessionLogsTable(); renderCommsStream();
+            renderActiveAgentRoster(); 
+            renderAdminPendingApprovals(); 
+            renderSessionLogsTable(); 
+            renderCommsStream();
             
             const activeTab = document.querySelector('main div[id^="tab-"]:not(.hidden)');
             if (!isAdm && activeTab && (activeTab.id === 'tab-roster' || activeTab.id === 'tab-logs')) {
@@ -351,7 +408,8 @@
             const t = document.createElement('div');
             t.className = 'cyber-panel p-3 rounded border-cyan-400 text-xs font-bold text-white glow-cyan font-mono z-50 pointer-events-none';
             t.innerText = window.sanitizeHTML(msg);
-            container.appendChild(t); setTimeout(() => t.remove(), 3500);
+            container.appendChild(t); 
+            setTimeout(() => t.remove(), 3500);
         }
 
         function renderCommsStream() {
@@ -360,12 +418,12 @@
             const isNearBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 100;
 
             stream.innerHTML = window.commsMessages.map(msg => `
-                <div class="p-3 rounded-lg bg-cyan-950/40 border border-cyan-500/20 font-mono text-xs space-y-2">
+                <div class="p-3 rounded-lg bg-cyan-950/40 border border-cyan-500/20 font-mono text-xs space-y-2 backdrop-blur-md">
                     <div class="flex items-center justify-between text-[10px] text-cyan-400/80">
                         <span class="font-bold text-cyan-300">${window.sanitizeHTML(msg.senderName)}</span>
                         <span>${window.sanitizeHTML(msg.timestamp)}</span>
                     </div>
-                    <p class="text-gray-200 text-sm whitespace-pre-wrap">${window.sanitizeHTML(msg.text)}</p>
+                    <p class="text-gray-100 text-sm whitespace-pre-wrap">${window.sanitizeHTML(msg.text)}</p>
                     ${msg.audioUrl ? `<div class="pt-1"><audio controls src="${msg.audioUrl}" class="w-full h-8 accent-cyan-400"></audio></div>` : ''}
                     ${msg.imageUrl ? `<div class="pt-2"><img src="${msg.imageUrl}" class="w-full rounded border border-cyan-500/50 object-contain max-h-64"></div>` : ''}
                     ${msg.videoUrl ? `<div class="pt-2"><video controls src="${msg.videoUrl}" class="w-full rounded border border-cyan-500/50 object-contain max-h-64"></video></div>` : ''}
@@ -387,7 +445,10 @@
                 createdAt: Date.now()
             };
 
-            window.commsMessages.push(newMsg); renderCommsStream(); input.value = '';
+            window.commsMessages.push(newMsg); 
+            window.persistLocalData(); // Save locally immediately
+            renderCommsStream(); 
+            input.value = '';
             if (isCloudEnabled) await addDoc(getCol('comms'), newMsg);
         }
 
@@ -407,7 +468,9 @@
                     videoUrl: type === 'video' ? reader.result : null,
                     createdAt: Date.now()
                 };
-                window.commsMessages.push(newMsg); renderCommsStream();
+                window.commsMessages.push(newMsg); 
+                window.persistLocalData();
+                renderCommsStream();
                 if (isCloudEnabled) await addDoc(getCol('comms'), newMsg);
             };
             event.target.value = '';
@@ -426,28 +489,34 @@
                     window.mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) window.audioChunks.push(event.data); };
                     window.mediaRecorder.onstop = async () => {
                         const audioBlob = new Blob(window.audioChunks, { type: 'audio/webm' });
-                        const reader = new FileReader(); reader.readAsDataURL(audioBlob);
+                        const reader = new FileReader(); 
+                        reader.readAsDataURL(audioBlob);
                         reader.onloadend = async function() {
                             const newVoiceMsg = {
                                 senderName: window.currentActiveUser ? window.currentActiveUser.name : 'Agent',
                                 senderId: window.currentActiveUser ? window.currentActiveUser.id : 'ID',
                                 text: '[ENCRYPTED TACTICAL VOICE MEMO]',
                                 timestamp: new Date().toLocaleTimeString(),
-                                audioUrl: reader.result, createdAt: Date.now()
+                                audioUrl: reader.result, 
+                                createdAt: Date.now()
                             };
-                            window.commsMessages.push(newVoiceMsg); renderCommsStream();
+                            window.commsMessages.push(newVoiceMsg); 
+                            window.persistLocalData();
+                            renderCommsStream();
                             if (isCloudEnabled) await addDoc(getCol('comms'), newVoiceMsg);
                         }
                         stream.getTracks().forEach(track => track.stop());
                     };
 
-                    window.mediaRecorder.start(); window.isRecordingAudio = true;
+                    window.mediaRecorder.start(); 
+                    window.isRecordingAudio = true;
                     if (recordBtn) recordBtn.classList.add('bg-rose-950', 'text-rose-300', 'border-rose-500', 'animate-pulse');
                     if (statusLabel) statusLabel.innerText = "RECORDING (5s MAX)...";
                     
                     setTimeout(() => {
                         if (window.mediaRecorder && window.mediaRecorder.state !== 'inactive') {
-                            window.mediaRecorder.stop(); window.isRecordingAudio = false;
+                            window.mediaRecorder.stop(); 
+                            window.isRecordingAudio = false;
                             if (recordBtn) recordBtn.classList.remove('bg-rose-950', 'text-rose-300', 'border-rose-500', 'animate-pulse');
                             if (statusLabel) statusLabel.innerText = "RECORD VOICE MEMO";
                         }
@@ -455,7 +524,7 @@
 
                 } catch (err) {
                     window.isRecordingAudio = false;
-                    window.showToast("MIC BLOCKED: Ensure URL is HTTPS and check browser permissions.");
+                    window.showToast("MIC DENIED: Please allow microphone access via the browser address bar icon.");
                 }
             } else {
                 if (window.mediaRecorder && window.mediaRecorder.state !== 'inactive') window.mediaRecorder.stop();
@@ -497,7 +566,8 @@
             if (!window.tacticalMarkers[id]) {
                 window.tacticalMarkers[id] = L.marker([lat, lng], { icon: customIcon }).addTo(window.tacticalMap);
             } else {
-                window.tacticalMarkers[id].setLatLng([lat, lng]); window.tacticalMarkers[id].setIcon(customIcon);
+                window.tacticalMarkers[id].setLatLng([lat, lng]); 
+                window.tacticalMarkers[id].setIcon(customIcon);
             }
 
             window.tacticalMarkers[id].bindPopup(`
@@ -517,7 +587,8 @@
                         const { latitude, longitude } = pos.coords;
                         const locData = { agentId: window.currentActiveUser.id, name: window.currentActiveUser.name, photo: window.currentActiveUser.photo || '', lat: latitude, lng: longitude, timestamp: Date.now() };
                         if (window.tacticalMap && !window.hasCenteredMap) {
-                            window.tacticalMap.setView([latitude, longitude], 16); window.hasCenteredMap = true;
+                            window.tacticalMap.setView([latitude, longitude], 16); 
+                            window.hasCenteredMap = true;
                         }
                         window.updateRemoteAgentMarker(locData);
                         if (isCloudEnabled) await setDoc(getDocRef('locations', window.currentActiveUser.id), locData);
@@ -537,7 +608,7 @@
                 const canEdit = window.currentActiveUser && (window.currentActiveUser.clearance === 'ADMIN' || window.currentActiveUser.id === user.id);
                 
                 return `
-                <div class="p-3 rounded-lg bg-cyan-950/20 border border-cyan-500/30 flex flex-col gap-2 font-mono text-xs">
+                <div class="p-3 rounded-lg bg-cyan-950/20 border border-cyan-500/30 flex flex-col gap-2 font-mono text-xs backdrop-blur-md">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center gap-3">
                             <div class="w-10 h-10 rounded-lg bg-void border border-cyan-500/50 flex items-center justify-center text-cyan-300 font-bold glow-cyan overflow-hidden flex-shrink-0">${avatarHtml}</div>
@@ -580,7 +651,9 @@
             window.persistLocalData();
             if (isCloudEnabled) await setDoc(getDocRef('agents', id), newAgent);
 
-            renderActiveAgentRoster(); window.showToast(`Agent ${id} added securely.`); window.closeAddAgentModal();
+            renderActiveAgentRoster(); 
+            window.showToast(`Agent ${id} added securely.`); 
+            window.closeAddAgentModal();
         }
 
         window.openEditAgentModal = function(id) {
@@ -611,7 +684,9 @@
             window.persistLocalData();
             if (isCloudEnabled) await updateDoc(getDocRef('agents', user.id), user);
             
-            renderActiveAgentRoster(); window.closeEditAgentModal(); window.showToast("Dossier updated successfully.");
+            renderActiveAgentRoster(); 
+            window.closeEditAgentModal(); 
+            window.showToast("Dossier updated successfully.");
         }
 
         function renderAdminPendingApprovals() {
@@ -645,18 +720,23 @@
         window.approveNewRecruit = async function(id) {
             if (window.pendingRegistrations && window.pendingRegistrations[id]) {
                 const approvedData = { ...window.pendingRegistrations[id], status: 'APPROVED' };
-                window.DEMO_USERS[id] = approvedData; delete window.pendingRegistrations[id];
+                window.DEMO_USERS[id] = approvedData; 
+                delete window.pendingRegistrations[id];
                 window.persistLocalData();
                 if (isCloudEnabled) { await updateDoc(getDocRef('agents', id), { status: 'APPROVED' }); }
-                renderActiveAgentRoster(); renderAdminPendingApprovals(); window.showToast(`Agent ${id} approved.`);
+                renderActiveAgentRoster(); 
+                renderAdminPendingApprovals(); 
+                window.showToast(`Agent ${id} approved.`);
             }
         }
 
         window.rejectNewRecruit = async function(id) {
             if (window.pendingRegistrations && window.pendingRegistrations[id]) {
-                delete window.pendingRegistrations[id]; window.persistLocalData();
+                delete window.pendingRegistrations[id]; 
+                window.persistLocalData();
                 if (isCloudEnabled) await deleteDoc(getDocRef('agents', id));
-                renderAdminPendingApprovals(); window.showToast(`Request denied.`);
+                renderAdminPendingApprovals(); 
+                window.showToast(`Request denied.`);
             }
         }
 
@@ -664,7 +744,7 @@
             const container = document.getElementById('session-audit-logs-container');
             if (!container) return;
             container.innerHTML = `
-                <div class="overflow-x-auto">
+                <div class="overflow-x-auto backdrop-blur-md bg-void/50 rounded-lg p-2">
                     <table class="w-full text-left font-mono text-xs">
                         <thead>
                             <tr class="border-b border-cyan-500/30 text-cyan-400">
@@ -695,6 +775,7 @@
         });
     </script>
 
+    <!-- Header Navigation -->
     <header class="h-14 sm:h-16 border-b border-cyan-500/30 bg-cyber-dark/80 px-3 sm:px-4 flex items-center justify-between z-40 sticky top-0 backdrop-blur-md">
         <div class="flex items-center gap-2.5">
             <div class="w-8 h-8 rounded-lg border border-cyan-500/50 bg-void flex items-center justify-center glow-cyan overflow-hidden app-logo-slot">STAR</div>
@@ -713,6 +794,8 @@
     </header>
 
     <main class="flex-1 flex flex-col md:flex-row overflow-hidden pb-14 md:pb-0 z-30 relative bg-transparent">
+        
+        <!-- Desktop Sidebar Menu -->
         <nav class="hidden md:flex w-64 border-r border-cyan-500/20 bg-cyber-dark/40 backdrop-blur-md p-4 flex-col gap-2 z-20">
             <button onclick="window.switchTab('comms')" id="nav-desk-comms" class="flex items-center gap-3 px-3 py-3 rounded-lg text-xs font-mono font-bold text-amber-300 bg-amber-950/40 border border-amber-500 glow-amber"><i data-lucide="radio" class="w-4 h-4"></i> COMMS</button>
             <button onclick="window.switchTab('map')" id="nav-desk-map" class="flex items-center gap-3 px-3 py-3 rounded-lg text-xs font-mono font-bold text-gray-400 hover:text-cyan-300 transition"><i data-lucide="map" class="w-4 h-4"></i> RADAR</button>
@@ -765,7 +848,7 @@
                         <h2 class="font-mono text-sm font-bold text-cyan-400 flex items-center gap-2"><i data-lucide="shield" class="w-4 h-4"></i> ACTIVE PERSONNEL ROSTER</h2>
                         <button onclick="window.openAddAgentModal()" class="px-3 py-1.5 bg-emerald-950 border border-emerald-500 text-emerald-300 rounded text-xs font-mono font-bold transition active:scale-95">ADD AGENT</button>
                     </div>
-                    <div id="admin-pending-approvals-panel" class="hidden p-4 rounded-xl bg-amber-950/20 border border-amber-500/40 space-y-3">
+                    <div id="admin-pending-approvals-panel" class="hidden p-4 rounded-xl bg-amber-950/20 border border-amber-500/40 space-y-3 backdrop-blur-md">
                         <div class="font-mono text-xs font-bold text-amber-300">PENDING RECRUITS</div>
                         <div id="pending-requests-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
                     </div>
@@ -783,6 +866,7 @@
         </div>
     </main>
 
+    <!-- Mobile Bottom Navigation -->
     <nav class="md:hidden fixed bottom-0 left-0 right-0 h-14 bg-cyber-dark/95 border-t border-cyan-500/30 grid grid-cols-4 z-40 backdrop-blur-md">
         <button onclick="window.switchTab('comms')" id="nav-mob-comms" class="flex flex-col items-center justify-center gap-1 text-[10px] font-mono font-bold text-amber-300 bg-amber-950/40 border-t-2 border-amber-500"><i data-lucide="radio" class="w-4 h-4"></i><span>COMMS</span></button>
         <button onclick="window.switchTab('map')" id="nav-mob-map" class="flex flex-col items-center justify-center gap-1 text-[10px] font-mono font-bold text-gray-400"><i data-lucide="map" class="w-4 h-4"></i><span>RADAR</span></button>
