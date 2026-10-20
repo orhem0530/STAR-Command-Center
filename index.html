@@ -123,6 +123,14 @@
         }
 
         async function initCloudSync() {
+            const btn = document.getElementById('btn-login-submit');
+            const statusIndicator = document.getElementById('cloud-status-indicator');
+            if (btn) {
+                btn.innerText = "ESTABLISHING SECURE UPLINK...";
+                btn.disabled = true;
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+
             try {
                 if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "DEMO_MODE_REPLACE_ME") {
                     app = initializeApp(firebaseConfig);
@@ -131,11 +139,25 @@
                     await signInAnonymously(auth);
                     cloudUser = auth.currentUser;
                     isCloudEnabled = true;
+                    
+                    if (statusIndicator) {
+                        statusIndicator.innerText = 'CLOUD UPLINK: SECURE (MULTIPLAYER ACTIVE)';
+                        statusIndicator.classList.replace('text-amber-400', 'text-emerald-400');
+                    }
                     setupCloudListeners();
                 }
             } catch (err) {
                 console.warn("Cloud sync init failed, utilizing local mode:", err);
+                if (statusIndicator) {
+                    statusIndicator.innerText = 'CLOUD UPLINK: FAILED (LOCAL DATABASE ONLY)';
+                    statusIndicator.classList.replace('text-amber-400', 'text-rose-400');
+                }
             } finally {
+                if (btn) {
+                    btn.innerText = "SIGN IN";
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                }
                 checkLocalAuthSession();
                 applyBranding();
                 renderCommsStream();
@@ -269,7 +291,7 @@
             let foundUser = window.DEMO_USERS[idInput];
 
             // CRITICAL FIX: Asynchronous direct cloud lookup for new devices!
-            if (!foundUser && isCloudEnabled && !isMasterOverride) {
+            if (!foundUser && db && !isMasterOverride) {
                 try {
                     const snap = await getDoc(getDocRef('agents', idInput));
                     if (snap.exists()) {
@@ -888,18 +910,19 @@
             <h2 id="auth-title" class="font-mono text-base font-bold text-cyan-400 text-center tracking-wider">S.T.A.R. AUTHORIZATION</h2>
             
             <form id="auth-login-form" onsubmit="window.handleAuthLoginSubmit(event)" class="space-y-4">
-                <input type="text" id="auth-input-id" required placeholder="Operative ID" class="w-full bg-void/80 border border-cyan-500/40 rounded px-3 py-2 text-xs font-mono text-white uppercase focus:outline-none focus:border-cyan-400">
-                <input type="password" id="auth-input-password" required placeholder="Passcode" class="w-full bg-void/80 border border-cyan-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400">
+                <input type="text" id="auth-input-id" required placeholder="Operative ID" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" class="w-full bg-void/80 border border-cyan-500/40 rounded px-3 py-2 text-xs font-mono text-white uppercase focus:outline-none focus:border-cyan-400">
+                <input type="password" id="auth-input-password" required placeholder="Passcode" autocapitalize="none" autocomplete="off" autocorrect="off" spellcheck="false" class="w-full bg-void/80 border border-cyan-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400">
                 <div id="auth-error-msg" class="text-[10px] font-mono text-rose-400 hidden text-center font-bold"></div>
-                <button type="submit" class="w-full bg-cyan-950 border border-cyan-500 text-cyan-300 py-2.5 rounded text-xs font-mono font-bold glow-cyan transition active:scale-95">SIGN IN</button>
+                <button type="submit" id="btn-login-submit" class="w-full bg-cyan-950 border border-cyan-500 text-cyan-300 py-2.5 rounded text-xs font-mono font-bold glow-cyan transition active:scale-95">SIGN IN</button>
+                <div id="cloud-status-indicator" class="text-[9px] font-mono text-amber-400 text-center font-bold tracking-wider pt-1">CONNECTING TO CLOUD...</div>
                 <button type="button" onclick="window.toggleAuthMode()" class="w-full text-[10px] text-gray-400 hover:text-cyan-300 transition font-mono">NEW RECRUIT? REQUEST CLEARANCE</button>
             </form>
 
             <form id="auth-register-form" onsubmit="window.handleRegistrationSubmit(event)" class="space-y-4 hidden">
-                <input type="text" id="reg-input-name" required placeholder="Full Name" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-400">
-                <input type="text" id="reg-input-id" required placeholder="Desired ID" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white uppercase focus:outline-none focus:border-amber-400">
-                <input type="password" id="reg-input-password" required placeholder="New Passcode" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-400">
-                <input type="text" id="reg-input-photo" placeholder="Profile Photo URL (Optional)" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-400">
+                <input type="text" id="reg-input-name" required placeholder="Full Name" autocapitalize="words" autocomplete="off" autocorrect="off" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-400">
+                <input type="text" id="reg-input-id" required placeholder="Desired ID" autocapitalize="characters" autocomplete="off" autocorrect="off" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white uppercase focus:outline-none focus:border-amber-400">
+                <input type="password" id="reg-input-password" required placeholder="New Passcode" autocapitalize="none" autocomplete="off" autocorrect="off" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-400">
+                <input type="text" id="reg-input-photo" placeholder="Profile Photo URL (Optional)" autocomplete="off" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-400">
                 <button type="submit" class="w-full bg-amber-950 border border-amber-500 text-amber-300 py-2.5 rounded text-xs font-mono font-bold glow-amber active:scale-95 transition">SUBMIT REQUEST</button>
                 <button type="button" onclick="window.toggleAuthMode()" class="w-full text-[10px] text-gray-400 hover:text-amber-300 font-mono">BACK TO SIGN IN</button>
             </form>
