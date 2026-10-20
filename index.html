@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>S.T.A.R. Command Center</title>
+    <title>Strategic Tracking and Automated Registry (S.T.A.R.)</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -28,21 +28,30 @@
         .glow-cyan { box-shadow: 0 0 15px rgba(0, 243, 255, 0.3); }
         .glow-amber { box-shadow: 0 0 15px rgba(245, 158, 11, 0.3); }
         .cyber-panel { background: linear-gradient(135deg, rgba(11, 15, 25, 0.95) 0%, rgba(3, 7, 18, 0.98) 100%); border: 1px solid rgba(0, 243, 255, 0.2); backdrop-filter: blur(10px); }
-        .scanlines { background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0, 0, 0, 0.3) 50%, rgba(0, 0, 0, 0.3)); background-size: 100% 4px; }
+        
+        /* Fixed scanlines overlay - pointer-events: none ensures inputs remain fully clickable */
+        .scanlines-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 9999; pointer-events: none;
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0, 0, 0, 0.2) 50%, rgba(0, 0, 0, 0.2));
+            background-size: 100% 4px; opacity: 0.6;
+        }
+        
         .custom-map-pin { background: transparent; border: none; }
+        
+        /* Modal strict layering */
+        .modal-overlay { z-index: 10000; }
+        .modal-content { position: relative; z-index: 10001; pointer-events: auto; }
     </style>
 </head>
-<body class="min-h-[100dvh] bg-void text-gray-100 flex flex-col overflow-x-hidden scanlines">
+<body class="min-h-[100dvh] bg-void text-gray-100 flex flex-col overflow-x-hidden">
+    <div class="scanlines-overlay"></div>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, addDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, addDoc, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // =========================================================================
-        // MULTIPLAYER CLOUD CONFIGURATION (FIREBASE)
-        // ** IMPORTANT: Replace this with your actual Firebase config keys later **
-        // =========================================================================
+        // Firebase Setup - Replace DEMO_MODE_REPLACE_ME with your actual Vercel/Firebase API Key
         const firebaseConfig = {
             apiKey: "DEMO_MODE_REPLACE_ME", 
             authDomain: "star-command.firebaseapp.com",
@@ -56,11 +65,9 @@
         let isCloudEnabled = false;
         const appId = 'star-command-center';
         
-        // Database references
         const getCol = (colName) => collection(db, 'artifacts', appId, 'public', 'data', colName);
         const getDocRef = (colName, docId) => doc(db, 'artifacts', appId, 'public', 'data', colName, docId);
 
-        // Global State
         window.currentActiveUser = null;
         window.soundEnabled = true;
         window.isLoginMode = true;
@@ -69,23 +76,30 @@
         window.mediaRecorder = null;
         window.audioChunks = [];
         window.isRecordingAudio = false;
+        window.editingAgentId = null;
 
-        // Sync State
+        // DUAL ENGINE STORAGE: Loads from LocalStorage first to guarantee zero-data loss
         window.DEMO_USERS = JSON.parse(localStorage.getItem('star_db_users')) || {
-            'STAR-ADMIN': { id: 'STAR-ADMIN', name: 'Commander Admin', clearance: 'ADMIN', pass: 'ILOV3BJMP7', passHash: 'ILOV3BJMP7', status: 'APPROVED', photo: '' }
+            'STAR-ADMIN': { id: 'STAR-ADMIN', name: 'Commander Admin', clearance: 'ADMIN', pass: 'ILOV3BJMP7', passHash: 'ILOV3BJMP7', status: 'APPROVED', photo: '', rank: 'Director', position: 'Command HQ' }
         };
         window.pendingRegistrations = JSON.parse(localStorage.getItem('star_db_pending')) || {};
         window.agentSessionLogs = JSON.parse(localStorage.getItem('star_db_logs')) || [];
-        window.commsMessages = [];
         window.appBranding = JSON.parse(localStorage.getItem('star_db_branding')) || { logoUrl: '', appName: 'S.T.A.R.' };
+        window.commsMessages = [];
 
-        // Security Sanitization
         window.sanitizeHTML = function(str) {
             if (typeof str !== 'string') return '';
             return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
         }
 
-        // Initialize Firebase
+        // Save state to browser so manually added agents never disappear
+        window.persistLocalData = function() {
+            localStorage.setItem('star_db_users', JSON.stringify(window.DEMO_USERS));
+            localStorage.setItem('star_db_pending', JSON.stringify(window.pendingRegistrations));
+            localStorage.setItem('star_db_logs', JSON.stringify(window.agentSessionLogs));
+            localStorage.setItem('star_db_branding', JSON.stringify(window.appBranding));
+        }
+
         async function initCloudSync() {
             try {
                 if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "DEMO_MODE_REPLACE_ME") {
@@ -97,7 +111,7 @@
                     isCloudEnabled = true;
                     setupCloudListeners();
                 } else {
-                    console.log("Running in Local Offline Mode. Add Firebase config for Cross-Device Sync.");
+                    console.log("Running in Local Offline Mode. Data is saving to browser local storage.");
                 }
             } catch (err) {
                 console.warn("Cloud sync init failed, falling back to local mode:", err);
@@ -109,62 +123,43 @@
 
         function setupCloudListeners() {
             if (!isCloudEnabled) return;
-
-            // Listen to Agents
             onSnapshot(getCol('agents'), (snapshot) => {
-                window.DEMO_USERS = {};
-                window.pendingRegistrations = {};
+                window.DEMO_USERS = {}; window.pendingRegistrations = {};
                 snapshot.forEach(doc => {
                     const data = doc.data();
                     if (data.status === 'APPROVED') window.DEMO_USERS[doc.id] = data;
                     else if (data.status === 'PENDING') window.pendingRegistrations[doc.id] = data;
                 });
-                renderActiveAgentRoster();
-                renderAdminPendingApprovals();
+                window.persistLocalData();
+                renderActiveAgentRoster(); renderAdminPendingApprovals();
             });
 
-            // Listen to Branding
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'branding'), (docSnap) => {
-                if (docSnap.exists()) {
-                    window.appBranding = docSnap.data();
-                    applyBranding();
-                }
+                if (docSnap.exists()) { window.appBranding = docSnap.data(); window.persistLocalData(); applyBranding(); }
             });
 
-            // Listen to Map Locations
-            onSnapshot(getCol('locations'), (snapshot) => {
-                snapshot.forEach(doc => window.updateRemoteAgentMarker(doc.data()));
-            });
+            onSnapshot(getCol('locations'), (snapshot) => { snapshot.forEach(doc => window.updateRemoteAgentMarker(doc.data())); });
 
-            // Listen to Comms (Real-time, Disappearing Fix)
             const qComms = query(getCol('comms'), orderBy('createdAt', 'asc'), limit(50));
             onSnapshot(qComms, (snapshot) => {
-                let msgs = [];
-                snapshot.forEach(doc => msgs.push({ id: doc.id, ...doc.data() }));
-                window.commsMessages = msgs;
-                renderCommsStream();
+                let msgs = []; snapshot.forEach(doc => msgs.push({ id: doc.id, ...doc.data() }));
+                window.commsMessages = msgs; renderCommsStream();
             });
 
-            // Listen to Logs
             const qLogs = query(getCol('logs'), orderBy('createdAt', 'desc'), limit(50));
             onSnapshot(qLogs, (snapshot) => {
-                let logs = [];
-                snapshot.forEach(doc => logs.push(doc.data()));
-                window.agentSessionLogs = logs;
-                renderSessionLogsTable();
+                let logs = []; snapshot.forEach(doc => logs.push(doc.data()));
+                window.agentSessionLogs = logs; window.persistLocalData(); renderSessionLogsTable();
             });
         }
 
-        // ==========================================
-        // BRANDING & LOGO
-        // ==========================================
         function applyBranding() {
             document.querySelectorAll('.app-title-slot').forEach(el => el.innerText = window.appBranding.appName || 'S.T.A.R.');
             document.querySelectorAll('.app-logo-slot').forEach(el => {
                 if (window.appBranding.logoUrl) {
                     el.innerHTML = `<img src="${window.sanitizeHTML(window.appBranding.logoUrl)}" class="w-full h-full object-cover">`;
                 } else {
-                    el.innerHTML = `<span class="text-cyan-400 font-bold font-mono text-xs">STAR</span>`;
+                    el.innerHTML = `<span class="text-cyan-400 font-bold font-mono text-[10px]">STAR</span>`;
                 }
             });
         }
@@ -183,19 +178,11 @@
                 appName: document.getElementById('app-name-input').value.trim() || 'S.T.A.R.'
             };
             window.appBranding = newBranding;
-            if (isCloudEnabled) {
-                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'branding'), newBranding);
-            } else {
-                localStorage.setItem('star_db_branding', JSON.stringify(newBranding));
-            }
-            applyBranding();
-            window.closeLogoConfigModal();
-            window.showToast("Branding updated globally.");
+            window.persistLocalData();
+            if (isCloudEnabled) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'branding'), newBranding);
+            applyBranding(); window.closeLogoConfigModal(); window.showToast("Branding updated globally.");
         }
 
-        // ==========================================
-        // AUTHENTICATION & ROLE UI
-        // ==========================================
         window.toggleAuthMode = function() {
             window.isLoginMode = !window.isLoginMode;
             document.getElementById('auth-login-form').classList.toggle('hidden');
@@ -215,10 +202,10 @@
                 window.showToast("Operative ID already in use or pending."); return;
             }
 
-            const newReg = { id, name, passHash: pass, photo, clearance: 'FIELD', status: 'PENDING' };
-            
+            const newReg = { id, name, pass, passHash: pass, photo, clearance: 'FIELD', status: 'PENDING' };
+            window.pendingRegistrations[id] = newReg;
+            window.persistLocalData();
             if (isCloudEnabled) await setDoc(getDocRef('agents', id), newReg);
-            else window.pendingRegistrations[id] = newReg;
 
             window.showToast(`Request submitted for ${id}. Awaiting Admin Approval.`);
             document.getElementById('auth-register-form').reset();
@@ -235,7 +222,6 @@
                 errorMsg.innerText = "ACCOUNT PENDING ADMIN APPROVAL."; errorMsg.classList.remove('hidden'); return;
             }
 
-            // Master Override Fallback
             const isMasterOverride = (idInput === 'STAR-ADMIN' && passInput === 'ILOV3BJMP7');
             let foundUser = window.DEMO_USERS[idInput];
 
@@ -252,27 +238,26 @@
                 const logEntry = {
                     agentId: foundUser.id, name: foundUser.name, clearance: foundUser.clearance,
                     timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
-                    ipDevice: 'VERCEL_WEB_CLIENT', loginCoord: 'ACQUIRING GPS...', createdAt: Date.now()
+                    ipDevice: navigator.userAgent.substring(0, 20) + '...', loginCoord: 'ACQUIRING GPS...', createdAt: Date.now()
                 };
 
+                window.agentSessionLogs.unshift(logEntry);
+                window.persistLocalData();
                 let logDocRef = null;
                 if (isCloudEnabled) logDocRef = await addDoc(getCol('logs'), logEntry);
-                else window.agentSessionLogs.unshift(logEntry);
 
                 document.getElementById('modal-auth-login').classList.add('hidden');
-                enforceRoleBasedUI();
-                window.startLiveGpsTracking();
-                window.showToast(`Welcome, ${foundUser.name}`);
+                enforceRoleBasedUI(); window.startLiveGpsTracking(); window.showToast(`Welcome, ${foundUser.name}`);
 
-                // Capture exact GPS Coordinate for Audit Logs
                 if ("geolocation" in navigator) {
                     navigator.geolocation.getCurrentPosition(
                         async (pos) => {
                             logEntry.loginCoord = `${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`;
+                            window.persistLocalData();
                             if (isCloudEnabled && logDocRef) await updateDoc(logDocRef, { loginCoord: logEntry.loginCoord });
                             renderSessionLogsTable();
                         },
-                        (err) => console.warn("GPS Denied"),
+                        (err) => console.warn("GPS Access Denied"),
                         { enableHighAccuracy: true, timeout: 5000 }
                     );
                 }
@@ -289,9 +274,7 @@
                     if (parsed && parsed.expiresAt && parsed.expiresAt > Date.now()) {
                         window.currentActiveUser = parsed;
                         document.getElementById('modal-auth-login').classList.add('hidden');
-                        enforceRoleBasedUI();
-                        window.startLiveGpsTracking();
-                        return;
+                        enforceRoleBasedUI(); window.startLiveGpsTracking(); return;
                     }
                 }
             } catch (e) { localStorage.removeItem('star_auth_user'); }
@@ -299,10 +282,8 @@
         }
 
         window.logoutUserSession = function() {
-            localStorage.removeItem('star_auth_user');
-            window.currentActiveUser = null;
-            enforceRoleBasedUI();
-            document.getElementById('modal-auth-login').classList.remove('hidden');
+            localStorage.removeItem('star_auth_user'); window.currentActiveUser = null;
+            enforceRoleBasedUI(); document.getElementById('modal-auth-login').classList.remove('hidden');
             window.showToast("Session Terminated.");
         }
 
@@ -310,32 +291,22 @@
             if (!window.currentActiveUser) return;
             const isAdm = window.currentActiveUser.clearance === 'ADMIN';
 
-            // Desktop Nav
             document.getElementById('nav-desk-roster').classList.toggle('hidden', !isAdm);
             document.getElementById('nav-desk-logs').classList.toggle('hidden', !isAdm);
-            // Mobile Nav
             document.getElementById('nav-mob-roster').classList.toggle('hidden', !isAdm);
             document.getElementById('nav-mob-logs').classList.toggle('hidden', !isAdm);
-            // Header Buttons
             document.getElementById('admin-branding-btn').classList.toggle('hidden', !isAdm);
             document.getElementById('btn-header-signin').classList.add('hidden');
             document.getElementById('btn-header-signout').classList.remove('hidden');
 
-            renderActiveAgentRoster();
-            renderAdminPendingApprovals();
-            renderSessionLogsTable();
-            renderCommsStream();
+            renderActiveAgentRoster(); renderAdminPendingApprovals(); renderSessionLogsTable(); renderCommsStream();
             
-            // Force non-admins out of restricted tabs
             const activeTab = document.querySelector('main div[id^="tab-"]:not(.hidden)');
             if (!isAdm && activeTab && (activeTab.id === 'tab-roster' || activeTab.id === 'tab-logs')) {
                 window.switchTab('comms');
             }
         }
 
-        // ==========================================
-        // UI & TABS
-        // ==========================================
         window.switchTab = function(tabId) {
             if (window.currentActiveUser && window.currentActiveUser.clearance !== 'ADMIN') {
                 if (tabId === 'roster' || tabId === 'logs') tabId = 'comms';
@@ -343,7 +314,6 @@
             ['comms', 'map', 'roster', 'logs'].forEach(t => {
                 const el = document.getElementById(`tab-${t}`);
                 if (el) el.classList.add('hidden');
-                
                 const btnDesk = document.getElementById(`nav-desk-${t}`);
                 const btnMob = document.getElementById(`nav-mob-${t}`);
                 if (btnDesk) { btnDesk.classList.remove('text-amber-300', 'bg-amber-950/40', 'border-amber-500'); btnDesk.classList.add('text-gray-400', 'border-transparent'); }
@@ -356,27 +326,18 @@
             if (activeDesk) { activeDesk.classList.add('text-amber-300', 'bg-amber-950/40', 'border-amber-500'); activeDesk.classList.remove('text-gray-400', 'border-transparent'); }
             if (activeMob) { activeMob.classList.add('text-amber-300', 'bg-amber-950/40', 'border-amber-500'); activeMob.classList.remove('text-gray-400', 'border-transparent'); }
 
-            if (tabId === 'map') {
-                setTimeout(() => { 
-                    if (!window.tacticalMap) window.initTacticalGpsMap(); 
-                    else window.tacticalMap.invalidateSize(); 
-                }, 200);
-            }
+            if (tabId === 'map') { setTimeout(() => { if (!window.tacticalMap) window.initTacticalGpsMap(); else window.tacticalMap.invalidateSize(); }, 200); }
         }
 
         window.showToast = function(msg) {
             const container = document.getElementById('toast-container');
             if (!container) return;
             const t = document.createElement('div');
-            t.className = 'cyber-panel p-3 rounded border-cyan-400 text-xs font-bold text-white glow-cyan font-mono z-50';
+            t.className = 'cyber-panel p-3 rounded border-cyan-400 text-xs font-bold text-white glow-cyan font-mono z-50 pointer-events-none';
             t.innerText = window.sanitizeHTML(msg);
-            container.appendChild(t);
-            setTimeout(() => t.remove(), 3500);
+            container.appendChild(t); setTimeout(() => t.remove(), 3500);
         }
 
-        // ==========================================
-        // COMMS & MEDIA DISPATCH
-        // ==========================================
         function renderCommsStream() {
             const stream = document.getElementById('comms-messages-stream');
             if (!stream) return;
@@ -391,9 +352,9 @@
                     <p class="text-gray-200 text-sm whitespace-pre-wrap">${window.sanitizeHTML(msg.text)}</p>
                     ${msg.audioUrl ? `<div class="pt-1"><audio controls src="${msg.audioUrl}" class="w-full h-8 accent-cyan-400"></audio></div>` : ''}
                     ${msg.imageUrl ? `<div class="pt-2"><img src="${msg.imageUrl}" class="w-full rounded border border-cyan-500/50 object-contain max-h-64"></div>` : ''}
+                    ${msg.videoUrl ? `<div class="pt-2"><video controls src="${msg.videoUrl}" class="w-full rounded border border-cyan-500/50 object-contain max-h-64"></video></div>` : ''}
                 </div>
             `).join('');
-
             if (isNearBottom) stream.scrollTop = stream.scrollHeight;
         }
 
@@ -410,31 +371,27 @@
                 createdAt: Date.now()
             };
 
-            // Optimistic Update
-            window.commsMessages.push(newMsg);
-            renderCommsStream();
-            const msgText = input.value.trim();
-            input.value = '';
-
+            window.commsMessages.push(newMsg); renderCommsStream(); input.value = '';
             if (isCloudEnabled) await addDoc(getCol('comms'), newMsg);
         }
 
-        window.handleIntelFileUpload = function(event) {
+        window.handleIntelFileUpload = function(event, type) {
             const file = event.target.files[0];
             if (!file) return;
+            if (file.size > 5 * 1024 * 1024) { window.showToast("File exceeds 5MB secure limit. Compress intel."); return; }
             const reader = new FileReader();
             reader.readAsDataURL(file);
             reader.onload = async function () {
                 const newMsg = {
                     senderName: window.currentActiveUser ? window.currentActiveUser.name : 'Agent',
                     senderId: window.currentActiveUser ? window.currentActiveUser.id : 'UNK',
-                    text: '[TACTICAL PHOTO INTEL]',
+                    text: type === 'image' ? '[TACTICAL PHOTO INTEL]' : '[TACTICAL VIDEO INTEL]',
                     timestamp: new Date().toLocaleTimeString(),
-                    imageUrl: reader.result,
+                    imageUrl: type === 'image' ? reader.result : null,
+                    videoUrl: type === 'video' ? reader.result : null,
                     createdAt: Date.now()
                 };
-                window.commsMessages.push(newMsg);
-                renderCommsStream();
+                window.commsMessages.push(newMsg); renderCommsStream();
                 if (isCloudEnabled) await addDoc(getCol('comms'), newMsg);
             };
             event.target.value = '';
@@ -448,40 +405,33 @@
                 try {
                     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("API_NOT_SUPPORTED");
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    
                     window.mediaRecorder = new MediaRecorder(stream);
                     window.audioChunks = [];
                     window.mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) window.audioChunks.push(event.data); };
-
                     window.mediaRecorder.onstop = async () => {
                         const audioBlob = new Blob(window.audioChunks, { type: 'audio/webm' });
-                        const reader = new FileReader();
-                        reader.readAsDataURL(audioBlob);
+                        const reader = new FileReader(); reader.readAsDataURL(audioBlob);
                         reader.onloadend = async function() {
                             const newVoiceMsg = {
                                 senderName: window.currentActiveUser ? window.currentActiveUser.name : 'Agent',
                                 senderId: window.currentActiveUser ? window.currentActiveUser.id : 'ID',
                                 text: '[ENCRYPTED TACTICAL VOICE MEMO]',
                                 timestamp: new Date().toLocaleTimeString(),
-                                audioUrl: reader.result,
-                                createdAt: Date.now()
+                                audioUrl: reader.result, createdAt: Date.now()
                             };
-                            window.commsMessages.push(newVoiceMsg);
-                            renderCommsStream();
+                            window.commsMessages.push(newVoiceMsg); renderCommsStream();
                             if (isCloudEnabled) await addDoc(getCol('comms'), newVoiceMsg);
                         }
                         stream.getTracks().forEach(track => track.stop());
                     };
 
-                    window.mediaRecorder.start();
-                    window.isRecordingAudio = true;
+                    window.mediaRecorder.start(); window.isRecordingAudio = true;
                     if (recordBtn) recordBtn.classList.add('bg-rose-950', 'text-rose-300', 'border-rose-500', 'animate-pulse');
                     if (statusLabel) statusLabel.innerText = "RECORDING (5s MAX)...";
                     
                     setTimeout(() => {
                         if (window.mediaRecorder && window.mediaRecorder.state !== 'inactive') {
-                            window.mediaRecorder.stop();
-                            window.isRecordingAudio = false;
+                            window.mediaRecorder.stop(); window.isRecordingAudio = false;
                             if (recordBtn) recordBtn.classList.remove('bg-rose-950', 'text-rose-300', 'border-rose-500', 'animate-pulse');
                             if (statusLabel) statusLabel.innerText = "RECORD VOICE MEMO";
                         }
@@ -489,7 +439,7 @@
 
                 } catch (err) {
                     window.isRecordingAudio = false;
-                    window.showToast("MIC ACCESS DENIED: Ensure site uses HTTPS and check browser padlock settings to allow Microphone.");
+                    window.showToast("MIC BLOCKED: Ensure URL is HTTPS and verify browser padlock settings.");
                 }
             } else {
                 if (window.mediaRecorder && window.mediaRecorder.state !== 'inactive') window.mediaRecorder.stop();
@@ -499,9 +449,6 @@
             }
         }
 
-        // ==========================================
-        // GPS RADAR & MAP
-        // ==========================================
         window.initTacticalGpsMap = function() {
             const mapContainer = document.getElementById('tactical-map');
             if (!mapContainer || window.tacticalMap || typeof L === 'undefined') return;
@@ -525,7 +472,6 @@
 
             if (typeof lat !== 'number' || typeof lng !== 'number') return;
 
-            // Live Profile Photo Marker
             const iconHtml = photo 
                 ? `<div class="w-9 h-9 rounded-full border-2 border-cyan-400 overflow-hidden bg-void glow-cyan"><img src="${window.sanitizeHTML(photo)}" class="w-full h-full object-cover"></div>`
                 : `<div class="w-8 h-8 rounded-full bg-cyan-500 border-2 border-white flex items-center justify-center text-[10px] font-bold text-black glow-cyan">${window.sanitizeHTML(id.substring(0,3))}</div>`;
@@ -535,8 +481,7 @@
             if (!window.tacticalMarkers[id]) {
                 window.tacticalMarkers[id] = L.marker([lat, lng], { icon: customIcon }).addTo(window.tacticalMap);
             } else {
-                window.tacticalMarkers[id].setLatLng([lat, lng]);
-                window.tacticalMarkers[id].setIcon(customIcon);
+                window.tacticalMarkers[id].setLatLng([lat, lng]); window.tacticalMarkers[id].setIcon(customIcon);
             }
 
             window.tacticalMarkers[id].bindPopup(`
@@ -555,45 +500,109 @@
                     async (pos) => {
                         const { latitude, longitude } = pos.coords;
                         const locData = { agentId: window.currentActiveUser.id, name: window.currentActiveUser.name, photo: window.currentActiveUser.photo || '', lat: latitude, lng: longitude, timestamp: Date.now() };
-
                         if (window.tacticalMap && !window.hasCenteredMap) {
-                            window.tacticalMap.setView([latitude, longitude], 16);
-                            window.hasCenteredMap = true;
+                            window.tacticalMap.setView([latitude, longitude], 16); window.hasCenteredMap = true;
                         }
                         window.updateRemoteAgentMarker(locData);
                         if (isCloudEnabled) await setDoc(getDocRef('locations', window.currentActiveUser.id), locData);
                     },
-                    (err) => console.warn("GPS Tracking Watch Error:", err),
+                    (err) => console.warn("GPS Warning:", err.message),
                     { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
                 );
             }
         }
 
-        // ==========================================
-        // ADMIN DASHBOARDS
-        // ==========================================
         function renderActiveAgentRoster() {
             const grid = document.getElementById('active-agent-roster-grid');
             if (!grid) return;
 
             grid.innerHTML = Object.values(window.DEMO_USERS).filter(u => u && u.status === 'APPROVED').map(user => {
                 const avatarHtml = user.photo ? `<img src="${window.sanitizeHTML(user.photo)}" class="w-full h-full object-cover">` : user.id.substring(0,2);
+                const canEdit = window.currentActiveUser && (window.currentActiveUser.clearance === 'ADMIN' || window.currentActiveUser.id === user.id);
+                
                 return `
-                <div class="p-3 rounded-lg bg-cyan-950/20 border border-cyan-500/30 flex items-center gap-3 font-mono text-xs">
-                    <div class="w-10 h-10 rounded-lg bg-void border border-cyan-500/50 flex items-center justify-center text-cyan-300 font-bold glow-cyan overflow-hidden flex-shrink-0">${avatarHtml}</div>
-                    <div class="min-w-0 flex-1">
-                        <div class="font-bold text-amber-400 tracking-wider text-sm truncate">${window.sanitizeHTML(user.id)}</div>
-                        <div class="font-bold text-cyan-300 truncate">${window.sanitizeHTML(user.name)}</div>
-                        <div class="text-[10px] text-gray-400 truncate">CLR: ${window.sanitizeHTML(user.clearance)}</div>
+                <div class="p-3 rounded-lg bg-cyan-950/20 border border-cyan-500/30 flex flex-col gap-2 font-mono text-xs">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-lg bg-void border border-cyan-500/50 flex items-center justify-center text-cyan-300 font-bold glow-cyan overflow-hidden flex-shrink-0">${avatarHtml}</div>
+                            <div class="min-w-0">
+                                <div class="font-bold text-amber-400 tracking-wider text-sm truncate">${window.sanitizeHTML(user.id)}</div>
+                                <div class="font-bold text-cyan-300 truncate">${window.sanitizeHTML(user.name)}</div>
+                                <div class="text-[10px] text-gray-400 truncate">CLR: ${window.sanitizeHTML(user.clearance)}</div>
+                            </div>
+                        </div>
+                        ${canEdit ? `<button onclick="window.openEditAgentModal('${user.id}')" class="p-1.5 bg-amber-950 border border-amber-500 text-amber-300 rounded hover:bg-amber-900 transition"><i data-lucide="edit" class="w-3 h-3"></i></button>` : ''}
+                    </div>
+                    <div class="grid grid-cols-2 gap-1 text-[10px] text-gray-300 bg-void/50 p-2 rounded mt-1 border border-cyan-500/20">
+                        <div>RANK: <span class="text-emerald-400">${window.sanitizeHTML(user.rank || 'N/A')}</span></div>
+                        <div>POS: <span class="text-emerald-400">${window.sanitizeHTML(user.position || 'N/A')}</span></div>
                     </div>
                 </div>`;
             }).join('') || '<div class="text-gray-400">No active personnel.</div>';
+            if (window.lucide) lucide.createIcons();
+        }
+
+        window.openAddAgentModal = function() {
+            if (!window.currentActiveUser || window.currentActiveUser.clearance !== 'ADMIN') return;
+            document.getElementById('add-agent-form').reset();
+            document.getElementById('modal-add-agent').classList.remove('hidden');
+        }
+        window.closeAddAgentModal = function() { document.getElementById('modal-add-agent').classList.add('hidden'); }
+
+        window.handleManualAgentAdd = async function(e) {
+            e.preventDefault();
+            const id = window.sanitizeHTML(document.getElementById('add-agent-id').value.trim().toUpperCase());
+            const name = window.sanitizeHTML(document.getElementById('add-agent-name').value.trim());
+            const pass = document.getElementById('add-agent-pass').value.trim();
+            const photo = document.getElementById('add-agent-photo').value.trim();
+            const clearance = document.getElementById('add-agent-clearance').value;
+
+            if (window.DEMO_USERS[id] || window.pendingRegistrations[id]) { window.showToast("Operative ID already exists."); return; }
+
+            const newAgent = { id, name, pass, passHash: pass, photo, clearance, status: 'APPROVED' };
+            window.DEMO_USERS[id] = newAgent;
+            window.persistLocalData();
+            if (isCloudEnabled) await setDoc(getDocRef('agents', id), newAgent);
+
+            renderActiveAgentRoster(); window.showToast(`Agent ${id} added securely.`); window.closeAddAgentModal();
+        }
+
+        window.openEditAgentModal = function(id) {
+            window.editingAgentId = id;
+            const user = window.DEMO_USERS[id];
+            document.getElementById('edit-agent-display-id').innerText = user.id;
+            document.getElementById('edit-agent-name').value = user.name || '';
+            document.getElementById('edit-agent-rank').value = user.rank || '';
+            document.getElementById('edit-agent-position').value = user.position || '';
+            document.getElementById('edit-agent-photo').value = user.photo || '';
+            document.getElementById('edit-agent-new-password').value = '';
+            document.getElementById('modal-edit-agent').classList.remove('hidden');
+        }
+        window.closeEditAgentModal = function() { window.editingAgentId = null; document.getElementById('modal-edit-agent').classList.add('hidden'); }
+
+        window.saveAgentDetails = async function(e) {
+            e.preventDefault();
+            if(!window.editingAgentId) return;
+            const user = window.DEMO_USERS[window.editingAgentId];
+            user.name = document.getElementById('edit-agent-name').value.trim();
+            user.rank = document.getElementById('edit-agent-rank').value.trim();
+            user.position = document.getElementById('edit-agent-position').value.trim();
+            user.photo = document.getElementById('edit-agent-photo').value.trim();
+            
+            const newPass = document.getElementById('edit-agent-new-password').value.trim();
+            if (newPass && window.currentActiveUser.clearance === 'ADMIN') { user.pass = newPass; user.passHash = newPass; }
+            
+            window.persistLocalData();
+            if (isCloudEnabled) await updateDoc(getDocRef('agents', user.id), user);
+            
+            renderActiveAgentRoster(); window.closeEditAgentModal(); window.showToast("Dossier updated successfully.");
         }
 
         function renderAdminPendingApprovals() {
             const grid = document.getElementById('pending-requests-grid');
             if (!grid) return;
             const pendingKeys = Object.keys(window.pendingRegistrations || {});
+            document.getElementById('admin-pending-approvals-panel').classList.toggle('hidden', pendingKeys.length === 0);
             
             grid.innerHTML = pendingKeys.map(id => {
                 const reg = window.pendingRegistrations[id];
@@ -618,15 +627,19 @@
 
         window.approveNewRecruit = async function(id) {
             if (window.pendingRegistrations && window.pendingRegistrations[id]) {
-                if (isCloudEnabled) await updateDoc(getDocRef('agents', id), { status: 'APPROVED' });
-                window.showToast(`Agent ${id} approved.`);
+                const approvedData = { ...window.pendingRegistrations[id], status: 'APPROVED' };
+                window.DEMO_USERS[id] = approvedData; delete window.pendingRegistrations[id];
+                window.persistLocalData();
+                if (isCloudEnabled) { await updateDoc(getDocRef('agents', id), { status: 'APPROVED' }); }
+                renderActiveAgentRoster(); renderAdminPendingApprovals(); window.showToast(`Agent ${id} approved.`);
             }
         }
 
         window.rejectNewRecruit = async function(id) {
             if (window.pendingRegistrations && window.pendingRegistrations[id]) {
+                delete window.pendingRegistrations[id]; window.persistLocalData();
                 if (isCloudEnabled) await deleteDoc(getDocRef('agents', id));
-                window.showToast(`Request denied.`);
+                renderAdminPendingApprovals(); window.showToast(`Request denied.`);
             }
         }
 
@@ -659,43 +672,39 @@
             `;
         }
 
-        // Initialize on Load
         window.addEventListener('DOMContentLoaded', () => {
             if (window.lucide) lucide.createIcons();
             initCloudSync();
         });
     </script>
 
-    <!-- HEADER -->
     <header class="h-14 sm:h-16 border-b border-cyan-500/30 bg-cyber-dark/90 px-3 sm:px-4 flex items-center justify-between z-40 sticky top-0 backdrop-blur-md">
         <div class="flex items-center gap-2.5">
             <div class="w-8 h-8 rounded-lg border border-cyan-500/50 bg-void flex items-center justify-center glow-cyan overflow-hidden app-logo-slot">STAR</div>
             <div>
                 <h1 class="font-mono text-xs sm:text-base font-bold text-cyan-400 tracking-wider flex items-center gap-2">
                     <span class="app-title-slot">S.T.A.R.</span> 
-                    <span class="text-[9px] px-1 py-0.5 rounded bg-cyan-950 border border-cyan-500 text-cyan-300">CLOUD</span>
+                    <span class="text-[9px] px-1 py-0.5 rounded bg-cyan-950 border border-cyan-500 text-cyan-300 hidden sm:inline">SECURE</span>
                 </h1>
             </div>
         </div>
         <div class="flex items-center gap-2">
-            <button id="admin-branding-btn" onclick="window.openLogoConfigModal()" class="hidden px-2.5 py-1.5 rounded-lg bg-indigo-950 border border-indigo-500 text-indigo-300 text-xs font-mono font-bold items-center">LOGO</button>
-            <button id="btn-header-signin" onclick="document.getElementById('modal-auth-login').classList.remove('hidden')" class="px-3 py-1.5 rounded-lg bg-cyan-950 border border-cyan-500 text-cyan-300 text-xs font-mono font-bold glow-cyan flex items-center">SIGN IN</button>
-            <button id="btn-header-signout" onclick="window.logoutUserSession()" class="hidden px-3 py-1.5 rounded-lg bg-rose-950 border border-rose-500 text-rose-300 text-xs font-mono font-bold items-center">SIGN OUT</button>
+            <button id="admin-branding-btn" onclick="window.openLogoConfigModal()" class="hidden px-2.5 py-1.5 rounded-lg bg-indigo-950 border border-indigo-500 text-indigo-300 text-xs font-mono font-bold items-center transition active:scale-95">LOGO</button>
+            <button id="btn-header-signin" onclick="document.getElementById('modal-auth-login').classList.remove('hidden')" class="px-3 py-1.5 rounded-lg bg-cyan-950 border border-cyan-500 text-cyan-300 text-xs font-mono font-bold glow-cyan flex items-center transition active:scale-95">SIGN IN</button>
+            <button id="btn-header-signout" onclick="window.logoutUserSession()" class="hidden px-3 py-1.5 rounded-lg bg-rose-950 border border-rose-500 text-rose-300 text-xs font-mono font-bold items-center transition active:scale-95">SIGN OUT</button>
         </div>
     </header>
 
-    <!-- MAIN BODY -->
-    <main class="flex-1 flex flex-col md:flex-row overflow-hidden pb-14 md:pb-0">
-        <!-- DESKTOP SIDEBAR -->
+    <main class="flex-1 flex flex-col md:flex-row overflow-hidden pb-14 md:pb-0 z-30 relative">
         <nav class="hidden md:flex w-64 border-r border-cyan-500/20 bg-cyber-dark/60 p-4 flex-col gap-2 z-20">
             <button onclick="window.switchTab('comms')" id="nav-desk-comms" class="flex items-center gap-3 px-3 py-3 rounded-lg text-xs font-mono font-bold text-amber-300 bg-amber-950/40 border border-amber-500 glow-amber"><i data-lucide="radio" class="w-4 h-4"></i> COMMS</button>
-            <button onclick="window.switchTab('map')" id="nav-desk-map" class="flex items-center gap-3 px-3 py-3 rounded-lg text-xs font-mono font-bold text-gray-400 hover:text-cyan-300"><i data-lucide="map" class="w-4 h-4"></i> RADAR</button>
-            <button onclick="window.switchTab('roster')" id="nav-desk-roster" class="hidden items-center gap-3 px-3 py-3 rounded-lg text-xs font-mono font-bold text-gray-400 hover:text-cyan-300"><i data-lucide="users" class="w-4 h-4"></i> ROSTER</button>
-            <button onclick="window.switchTab('logs')" id="nav-desk-logs" class="hidden items-center gap-3 px-3 py-3 rounded-lg text-xs font-mono font-bold text-gray-400 hover:text-cyan-300"><i data-lucide="shield-alert" class="w-4 h-4"></i> AUDIT LOGS</button>
+            <button onclick="window.switchTab('map')" id="nav-desk-map" class="flex items-center gap-3 px-3 py-3 rounded-lg text-xs font-mono font-bold text-gray-400 hover:text-cyan-300 transition"><i data-lucide="map" class="w-4 h-4"></i> RADAR</button>
+            <button onclick="window.switchTab('roster')" id="nav-desk-roster" class="hidden items-center gap-3 px-3 py-3 rounded-lg text-xs font-mono font-bold text-gray-400 hover:text-cyan-300 transition"><i data-lucide="users" class="w-4 h-4"></i> ROSTER</button>
+            <button onclick="window.switchTab('logs')" id="nav-desk-logs" class="hidden items-center gap-3 px-3 py-3 rounded-lg text-xs font-mono font-bold text-gray-400 hover:text-cyan-300 transition"><i data-lucide="shield-alert" class="w-4 h-4"></i> AUDIT LOGS</button>
         </nav>
 
-        <!-- CONTENT VIEWPORT -->
         <div class="flex-1 relative overflow-y-auto p-3 sm:p-6 bg-void/90 flex flex-col">
+            
             <!-- COMMS TAB -->
             <div id="tab-comms" class="space-y-4 flex-1 flex flex-col">
                 <div class="cyber-panel p-4 rounded-xl flex-1 flex flex-col space-y-3">
@@ -704,17 +713,21 @@
                     
                     <div class="space-y-2 pt-2">
                         <form onsubmit="window.handleCommsSubmit(event)" class="flex gap-2">
-                            <input type="text" id="comms-input-text" placeholder="Type tactical message..." class="flex-1 bg-void/80 border border-cyan-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none">
-                            <button type="submit" class="px-4 bg-cyan-950 border border-cyan-500 text-cyan-300 rounded text-xs font-mono font-bold glow-cyan">SEND</button>
+                            <input type="text" id="comms-input-text" placeholder="Type tactical message..." class="flex-1 bg-void/80 border border-cyan-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400">
+                            <button type="submit" class="px-4 bg-cyan-950 border border-cyan-500 text-cyan-300 rounded text-xs font-mono font-bold glow-cyan active:scale-95 transition">SEND</button>
                         </form>
                         <div class="flex flex-wrap gap-2">
-                            <button type="button" id="voice-record-btn" onclick="window.toggleVoiceRecording()" class="flex-1 py-2 px-3 bg-cyan-950/60 border border-cyan-500/60 text-cyan-300 rounded text-xs font-mono font-bold flex items-center justify-center gap-2">
+                            <button type="button" id="voice-record-btn" onclick="window.toggleVoiceRecording()" class="flex-1 py-2 px-3 bg-cyan-950/60 border border-cyan-500/60 text-cyan-300 rounded text-xs font-mono font-bold flex items-center justify-center gap-2 active:scale-95 transition">
                                 <i data-lucide="mic" class="w-4 h-4"></i><span id="voice-status-label">RECORD VOICE</span>
                             </button>
-                            <button type="button" onclick="document.getElementById('intel-photo-upload').click()" class="py-2 px-3 bg-purple-950/80 border border-purple-500/60 text-purple-300 rounded text-xs font-mono font-bold flex items-center gap-1.5">
+                            <button type="button" onclick="document.getElementById('intel-photo-upload').click()" class="py-2 px-3 bg-purple-950/80 border border-purple-500/60 text-purple-300 rounded text-xs font-mono font-bold flex items-center gap-1.5 active:scale-95 transition">
                                 <i data-lucide="camera" class="w-4 h-4"></i> PHOTO
                             </button>
-                            <input type="file" id="intel-photo-upload" accept="image/*" class="hidden" onchange="window.handleIntelFileUpload(event)">
+                            <input type="file" id="intel-photo-upload" accept="image/*" class="hidden" onchange="window.handleIntelFileUpload(event, 'image')">
+                            <button type="button" onclick="document.getElementById('intel-video-upload').click()" class="py-2 px-3 bg-indigo-950/80 border border-indigo-500/60 text-indigo-300 rounded text-xs font-mono font-bold flex items-center gap-1.5 active:scale-95 transition">
+                                <i data-lucide="video" class="w-4 h-4"></i> VIDEO
+                            </button>
+                            <input type="file" id="intel-video-upload" accept="video/*" class="hidden" onchange="window.handleIntelFileUpload(event, 'video')">
                         </div>
                     </div>
                 </div>
@@ -731,7 +744,10 @@
             <!-- ROSTER TAB (ADMIN ONLY) -->
             <div id="tab-roster" class="hidden space-y-4">
                 <div class="cyber-panel p-4 rounded-xl space-y-4">
-                    <h2 class="font-mono text-sm font-bold text-cyan-400 flex items-center gap-2"><i data-lucide="shield" class="w-4 h-4"></i> ACTIVE PERSONNEL ROSTER</h2>
+                    <div class="flex items-center justify-between">
+                        <h2 class="font-mono text-sm font-bold text-cyan-400 flex items-center gap-2"><i data-lucide="shield" class="w-4 h-4"></i> ACTIVE PERSONNEL ROSTER</h2>
+                        <button onclick="window.openAddAgentModal()" class="px-3 py-1.5 bg-emerald-950 border border-emerald-500 text-emerald-300 rounded text-xs font-mono font-bold transition active:scale-95">ADD AGENT</button>
+                    </div>
                     <div id="admin-pending-approvals-panel" class="hidden p-4 rounded-xl bg-amber-950/20 border border-amber-500/40 space-y-3">
                         <div class="font-mono text-xs font-bold text-amber-300">PENDING RECRUITS</div>
                         <div id="pending-requests-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
@@ -750,7 +766,6 @@
         </div>
     </main>
 
-    <!-- MOBILE BOTTOM NAVIGATION TOOLBAR -->
     <nav class="md:hidden fixed bottom-0 left-0 right-0 h-14 bg-cyber-dark/95 border-t border-cyan-500/30 grid grid-cols-4 z-40 backdrop-blur-md">
         <button onclick="window.switchTab('comms')" id="nav-mob-comms" class="flex flex-col items-center justify-center gap-1 text-[10px] font-mono font-bold text-amber-300 bg-amber-950/40 border-t-2 border-amber-500"><i data-lucide="radio" class="w-4 h-4"></i><span>COMMS</span></button>
         <button onclick="window.switchTab('map')" id="nav-mob-map" class="flex flex-col items-center justify-center gap-1 text-[10px] font-mono font-bold text-gray-400"><i data-lucide="map" class="w-4 h-4"></i><span>RADAR</span></button>
@@ -758,9 +773,8 @@
         <button onclick="window.switchTab('logs')" id="nav-mob-logs" class="hidden flex-col items-center justify-center gap-1 text-[10px] font-mono font-bold text-gray-400"><i data-lucide="shield-alert" class="w-4 h-4"></i><span>LOGS</span></button>
     </nav>
 
-    <!-- AUTH MODAL -->
-    <div id="modal-auth-login" class="fixed inset-0 bg-void/95 backdrop-blur-md z-50 flex items-center justify-center p-3">
-        <div class="cyber-panel w-full max-w-sm p-5 rounded-2xl border-cyan-500/50 space-y-5 glow-cyan">
+    <div id="modal-auth-login" class="modal-overlay fixed inset-0 bg-void/95 backdrop-blur-md flex items-center justify-center p-3">
+        <div class="modal-content cyber-panel w-full max-w-sm p-5 rounded-2xl border-cyan-500/50 space-y-5 glow-cyan">
             <div class="w-16 h-16 rounded-xl border border-cyan-500 bg-void mx-auto flex items-center justify-center overflow-hidden app-logo-slot">STAR</div>
             <h2 id="auth-title" class="font-mono text-base font-bold text-cyan-400 text-center tracking-wider">S.T.A.R. AUTHORIZATION</h2>
             
@@ -773,32 +787,72 @@
             </form>
 
             <form id="auth-register-form" onsubmit="window.handleRegistrationSubmit(event)" class="space-y-4 hidden">
-                <input type="text" id="reg-input-name" required placeholder="Full Name" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white">
-                <input type="text" id="reg-input-id" required placeholder="Desired ID" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white uppercase">
-                <input type="password" id="reg-input-password" required placeholder="New Passcode" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white">
-                <input type="text" id="reg-input-photo" placeholder="Profile Photo URL (Optional)" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white">
-                <button type="submit" class="w-full bg-amber-950 border border-amber-500 text-amber-300 py-2.5 rounded text-xs font-mono font-bold glow-amber active:scale-95">SUBMIT REQUEST</button>
+                <input type="text" id="reg-input-name" required placeholder="Full Name" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-400">
+                <input type="text" id="reg-input-id" required placeholder="Desired ID" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white uppercase focus:outline-none focus:border-amber-400">
+                <input type="password" id="reg-input-password" required placeholder="New Passcode" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-400">
+                <input type="text" id="reg-input-photo" placeholder="Profile Photo URL (Optional)" class="w-full bg-void/80 border border-amber-500/40 rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-400">
+                <button type="submit" class="w-full bg-amber-950 border border-amber-500 text-amber-300 py-2.5 rounded text-xs font-mono font-bold glow-amber active:scale-95 transition">SUBMIT REQUEST</button>
                 <button type="button" onclick="window.toggleAuthMode()" class="w-full text-[10px] text-gray-400 hover:text-amber-300 font-mono">BACK TO SIGN IN</button>
             </form>
         </div>
     </div>
 
     <!-- LOGO CONFIG MODAL -->
-    <div id="modal-logo-config" class="fixed inset-0 bg-void/95 backdrop-blur-md z-50 flex items-center justify-center p-3 hidden">
-        <div class="cyber-panel w-full max-w-md p-5 rounded-2xl border-indigo-500/50 space-y-4">
+    <div id="modal-logo-config" class="modal-overlay fixed inset-0 bg-void/95 backdrop-blur-md flex items-center justify-center p-3 hidden">
+        <div class="modal-content cyber-panel w-full max-w-md p-5 rounded-2xl border-indigo-500/50 space-y-4">
             <h3 class="font-mono text-sm font-bold text-indigo-400">CONFIGURE WEB APP BRANDING</h3>
             <form onsubmit="window.handleLogoConfigSubmit(event)" class="space-y-3">
-                <input type="text" id="app-name-input" placeholder="App Title" class="w-full bg-void/80 border border-indigo-500/40 rounded px-2 py-1.5 text-xs font-mono text-white">
-                <input type="text" id="logo-url-input" placeholder="Logo Image URL" class="w-full bg-void/80 border border-indigo-500/40 rounded px-2 py-1.5 text-xs font-mono text-white">
+                <input type="text" id="app-name-input" placeholder="App Title" class="w-full bg-void/80 border border-indigo-500/40 rounded px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-indigo-400">
+                <input type="text" id="logo-url-input" placeholder="Logo Image URL" class="w-full bg-void/80 border border-indigo-500/40 rounded px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-indigo-400">
                 <div class="flex gap-2 pt-2">
-                    <button type="button" onclick="window.closeLogoConfigModal()" class="flex-1 bg-void border border-rose-500 text-rose-400 py-2 rounded text-xs font-mono font-bold active:scale-95">CANCEL</button>
-                    <button type="submit" class="flex-1 bg-indigo-950 border border-indigo-500 text-indigo-300 py-2 rounded text-xs font-mono font-bold active:scale-95">APPLY BRANDING</button>
+                    <button type="button" onclick="window.closeLogoConfigModal()" class="flex-1 bg-void border border-rose-500 text-rose-400 py-2 rounded text-xs font-mono font-bold active:scale-95 transition">CANCEL</button>
+                    <button type="submit" class="flex-1 bg-indigo-950 border border-indigo-500 text-indigo-300 py-2 rounded text-xs font-mono font-bold active:scale-95 transition">APPLY BRANDING</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <!-- TOASTS -->
+    <!-- ADD AGENT MODAL -->
+    <div id="modal-add-agent" class="modal-overlay fixed inset-0 bg-void/95 backdrop-blur-md flex items-center justify-center p-3 hidden">
+        <div class="modal-content cyber-panel w-full max-w-md p-5 rounded-2xl border-emerald-500/50 space-y-4">
+            <h3 class="font-mono text-sm font-bold text-emerald-400">ADD NEW AGENT</h3>
+            <form id="add-agent-form" onsubmit="window.handleManualAgentAdd(event)" class="space-y-3">
+                <input type="text" id="add-agent-id" required placeholder="Agent ID" class="w-full bg-void/80 border border-emerald-500/40 rounded px-2 py-1.5 text-xs font-mono text-white uppercase focus:outline-none focus:border-emerald-400">
+                <input type="text" id="add-agent-name" required placeholder="Full Name" class="w-full bg-void/80 border border-emerald-500/40 rounded px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400">
+                <input type="text" id="add-agent-pass" required placeholder="Passcode" class="w-full bg-void/80 border border-emerald-500/40 rounded px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400">
+                <input type="text" id="add-agent-photo" placeholder="Profile Photo URL" class="w-full bg-void/80 border border-emerald-500/40 rounded px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400">
+                <select id="add-agent-clearance" class="w-full bg-void/80 border border-emerald-500/40 rounded px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400">
+                    <option value="FIELD">FIELD</option><option value="ADMIN">ADMIN</option>
+                </select>
+                <div class="flex gap-2 pt-2">
+                    <button type="button" onclick="window.closeAddAgentModal()" class="flex-1 bg-void border border-rose-500 text-rose-400 py-2 rounded text-xs font-mono font-bold active:scale-95 transition">CANCEL</button>
+                    <button type="submit" class="flex-1 bg-emerald-950 border border-emerald-500 text-emerald-300 py-2 rounded text-xs font-mono font-bold active:scale-95 transition">CREATE</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- EDIT DOSSIER MODAL -->
+    <div id="modal-edit-agent" class="modal-overlay fixed inset-0 bg-void/95 backdrop-blur-md flex items-center justify-center p-3 hidden">
+        <div class="modal-content cyber-panel w-full max-w-md p-5 rounded-2xl border-cyan-500/50 space-y-4 max-h-[90vh] overflow-y-auto">
+            <h3 class="font-mono text-sm font-bold text-cyan-400">EDIT DOSSIER: <span id="edit-agent-display-id" class="text-amber-300"></span></h3>
+            <form onsubmit="window.saveAgentDetails(event)" class="space-y-3">
+                <input type="text" id="edit-agent-name" placeholder="Name" class="w-full bg-void/80 border border-cyan-500/40 rounded px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-400">
+                <input type="text" id="edit-agent-rank" placeholder="Rank" class="w-full bg-void/80 border border-cyan-500/40 rounded px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-400">
+                <input type="text" id="edit-agent-position" placeholder="Position" class="w-full bg-void/80 border border-cyan-500/40 rounded px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-400">
+                <input type="text" id="edit-agent-photo" placeholder="Profile Photo URL" class="w-full bg-void/80 border border-cyan-500/40 rounded px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-400">
+                <div class="border-t border-rose-500/30 pt-2 mt-2">
+                    <input type="text" id="edit-agent-new-password" placeholder="New Passcode (Admin only)" class="w-full bg-void/80 border border-rose-500/40 rounded px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-rose-400">
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="button" onclick="window.closeEditAgentModal()" class="flex-1 bg-void border border-rose-500 text-rose-400 py-2 rounded text-xs font-mono font-bold active:scale-95 transition">CANCEL</button>
+                    <button type="submit" class="flex-1 bg-cyan-950 border border-cyan-500 text-cyan-300 py-2 rounded text-xs font-mono font-bold glow-cyan active:scale-95 transition">SAVE</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- TOAST NOTIFICATIONS CONTAINER -->
     <div id="toast-container" class="fixed bottom-16 md:bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
 </body>
 </html>
